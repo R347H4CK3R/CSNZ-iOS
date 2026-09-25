@@ -2,9 +2,7 @@ name: iOS ARM64 Runtime
 on:
   workflow_dispatch:
   push:
-    paths:
-      - '.github/workflows/ios-runtime.yml'
-      - 'scripts/**'
+    branches: [ main ]
 jobs:
   runtime:
     runs-on: macos-latest
