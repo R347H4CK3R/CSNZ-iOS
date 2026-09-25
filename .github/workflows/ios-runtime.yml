@@ -1,0 +1,38 @@
+name: iOS ARM64 Runtime
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/ios-runtime.yml'
+      - 'scripts/**'
+jobs:
+  runtime:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout Xash3D FWGS
+        uses: actions/checkout@v4
+        with:
+          repository: FWGS/xash3d-fwgs
+          path: xash3d-fwgs
+          submodules: recursive
+      - name: Show Apple toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          clang --version
+      - name: Validate iOS ARM64 source path
+        run: |
+          test -f xash3d-fwgs/waf
+          test -f xash3d-fwgs/scripts/ios/createipa.sh
+          test -f xash3d-fwgs/scripts/ios/buildhlsdk.sh
+          grep -R -- '--ios' xash3d-fwgs/scripts/ios xash3d-fwgs/wscript | head -30
+      - name: Record runtime provenance
+        run: |
+          mkdir -p artifact
+          git -C xash3d-fwgs rev-parse HEAD > artifact/xash3d-commit.txt
+          printf 'target=ios-arm64\nassets=excluded\nproprietary_windows_dlls=excluded\n' > artifact/runtime.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: csnz-ios-runtime-validation
+          path: artifact
