@@ -6,31 +6,57 @@ on:
 jobs:
   runtime:
     runs-on: macos-latest
+    env:
+      SDL_VERSION: 2.32.10
     steps:
-      - uses: actions/checkout@v4
       - name: Checkout Xash3D FWGS
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: FWGS/xash3d-fwgs
           path: xash3d-fwgs
           submodules: recursive
-      - name: Show Apple toolchain
+      - name: Build SDL2 iOS framework
         run: |
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-path
-          clang --version
-      - name: Validate iOS ARM64 source path
+          git clone --depth=1 --branch release-$SDL_VERSION https://github.com/libsdl-org/SDL SDL
+          cd SDL/Xcode/SDL
+          xcodebuild -scheme xcFramework-iOS -target xcFramework-iOS build -configuration Release
+          sudo cp -R Products/SDL2.xcframework/ios-arm64/SDL2.framework /Library/Frameworks
+      - name: Checkout native HLSDK gameplay baseline
+        run: git clone --recursive --depth=1 --branch mobile_hacks https://github.com/FWGS/hlsdk-portable hlsdk
+      - name: Build Xash3D engine for iOS ARM64
+        working-directory: xash3d-fwgs
+        run: ./waf configure --enable-lto --ios build install --destdir=build/ios
+      - name: Build native gameplay libraries
         run: |
-          test -f xash3d-fwgs/waf
-          test -f xash3d-fwgs/scripts/ios/createipa.sh
-          test -f xash3d-fwgs/scripts/ios/buildhlsdk.sh
-          grep -R -- '--ios' xash3d-fwgs/scripts/ios xash3d-fwgs/wscript | head -30
-      - name: Record runtime provenance
+          mkdir -p xash3d-fwgs/build/ios/libs
+          cmake -S hlsdk -B hlsdk/build -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DCMAKE_INSTALL_PREFIX="$(pwd)/xash3d-fwgs/build/ios/libs" -DCMAKE_BUILD_TYPE=Debug
+          cmake --build hlsdk/build --target install
+      - name: Stage SDL and package IPA
+        working-directory: xash3d-fwgs
+        run: |
+          cp -R /Library/Frameworks/SDL2.framework build/
+          ./scripts/ios/createipa.sh
+      - name: Verify IPA and ARM64 payload
+        working-directory: xash3d-fwgs
+        run: |
+          test -f build/xash3d.ipa
+          rm -rf verify && mkdir verify && cd verify
+          unzip -q ../build/xash3d.ipa
+          APP="$(find Payload -maxdepth 1 -name '*.app' -type d | head -1)"
+          test -n "$APP"
+          EXE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")
+          file "$APP/$EXE" | tee ../../runtime-file.txt
+          file "$APP/$EXE" | grep -q arm64
+          codesign -d --entitlements :- "$APP" > ../../entitlements.plist 2>&1 || true
+      - name: Stage clean runtime artifact
         run: |
           mkdir -p artifact
+          cp xash3d-fwgs/build/xash3d.ipa artifact/CSNZ-iOS-Runtime-unsigned.ipa
+          cp xash3d-fwgs/runtime-file.txt artifact/ 2>/dev/null || true
+          cp xash3d-fwgs/entitlements.plist artifact/ 2>/dev/null || true
           git -C xash3d-fwgs rev-parse HEAD > artifact/xash3d-commit.txt
-          printf 'target=ios-arm64\nassets=excluded\nproprietary_windows_dlls=excluded\n' > artifact/runtime.txt
+          printf 'target=ios-arm64\nproprietary_assets=excluded\ncsnz_windows_binaries=excluded\n' > artifact/runtime.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: csnz-ios-runtime-validation
-          path: artifact
+          name: CSNZ-iOS-ARM64-runtime
+          path: artifact/
